@@ -1,0 +1,129 @@
+---
+title: "Prediction Assignment Coursera Practical Machine Learning"
+output: html_document
+keep_md: true
+author: by W. Bouma
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(caret)
+library(rattle)
+library(mlbench)
+
+```
+
+### Overview
+
+The goal of this assignment is to predict the way an exercise is performed. Hereto we have trained an random forest algorithm on training data and predict the way exercises are performed given variables provided in a seperate testset. 
+
+The data is collected from accelerometers on the belt, forearm, arm, and dumbell used by 6 participants while performing barbell lifts correctly and incorrectly in 5 different ways.
+
+More information can be found following this [link](http://groupware.les.inf.puc-rio.br/har) (section on the Weight Lifting Exercise Dataset). They have been very generous in allowing their data to be used for this kind of assignment.
+
+### Data preparation
+
+First, we download the data from the source mentioned above.
+```{r }
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", sep=",")
+test <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",sep=",")
+test_original <- test
+```
+
+Then we take a first look at the data by showing the summary
+
+```{r}
+summary(training)
+```
+
+When we look at the data we notice the large number of variables (160).
+Based on the summary and the explanation provided at [the source] (http://groupware.les.inf.puc-rio.br/har) we can conclude there are variables that are not meaningfull for predicting the outcome and we therefore don't want te be included in training the model;  
+
+* variables with (many) missing data, empty fields, NA Values and/or #DIV/0! errors 
+* variables that refer to the person who executed the exercise or variables that refer to the time(frame) the exercise was executed.
+
+*Note: We will be perfectly able to determine the class -and even the name of the subject who performed the exercise- in the testset correctly just based on the raw_timestamp_part_1 variabele. However, our objective is to build a user and time independent classifier*
+
+All other variables provide information about the movement and position of the devices used measured in intervals.
+
+We remove the colums we don't want to include for training the algorithm;
+
+```{r }
+#download data again and now label NA,NaN,empty fields and DIV/O errors as NA values
+training <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", sep=",",na.strings = c("","NA","NaN","#DIV/0"))
+test <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",sep=",",na.strings = c("","NA","NaN","#DIV/0"))
+
+#remove columns with missing data and/or errors
+training <- training[ ,colSums(is.na(training)) == 0]
+test <- test[ , colSums(is.na(test)) == 0]
+
+#remove columns with information of the participant and/or timestamps/interval
+training <- training[,c(8:length(training))]
+test <- test[,c(8:length(test))]
+
+#remove the final column for the testset which is just a placeholder for the class we need to predict
+test <- test[,-length(test)]
+```
+
+Each row in our two datasets therefore contains information of positions and movements of devices during the performance of the exercises at a certain interval rather than aggregated information of a fully completed single repetion or a sequence of repetitions (set).
+
+Looking at the test set, we are provided with (just) data recorded during a window/interval instead of a full range of motion. Our classifier should therefore be able to predict the correct class just based on information of a certain interval. An approach where we predict the class based on a data on a full range of motion (repetion) is therefore not possible.
+
+
+
+### Modelselection
+We split up the current trainingset in a trainingset (70% of the data) to train the model and a testset (30% of the data). We choose to train a random forest algorithm (training 500 decision trees) using a 10 fold cross validation. This algorithm runs multiple decision trees by bootstrapping samples of the data (bagging) and combine the results of each decision tree to predict the class.
+
+```{r}
+
+#Split training and test data
+inTrain <- createDataPartition(y=training$classe,p=0.7,list=FALSE)
+train_set <- training[inTrain,]
+test_set <-training[-inTrain,]
+
+# Train random forest model
+set.seed(1234)
+
+    train_ctrl <- trainControl(method = "cv", number = 10)
+
+    model_rf <- train(classe ~ .,
+                    data = train_set,
+                    method = "rf",
+                    trControl = train_ctrl,
+                    do.trace = 500,
+                    verbose = FALSE, importance=TRUE)
+
+```
+
+When we look at the final model that is produced we see a promissing result; the algorithm was able to predict almost all of the classes in the training set correctly. 
+
+```{r}
+model_rf$finalModel
+```
+
+###Out-of-sample-error
+The out of bag estimate for the error rate is `r model_rf$finalModel$err.rate[nrow(model_rf$finalModel$err.rate),1]*100`%. This is the number of misclassified classes as a percentage of the total number of entries in the training dataset. Since random forest uses bagging (bootstrap samples) it can evaluate itself on those items in the trainingset that were not selected when bootstrapping in each iteration running the decision trees.  
+
+Now let's determine the out-of-sample error based on the testset we held out (30% of the data):
+
+```{r}
+predictions <- predict(model_rf$finalModel,newdata = test_set)
+actual_predicted <- data.frame(actual = test_set$classe,prediction = predictions)
+length(actual_predicted[actual_predicted$actual!=actual_predicted$prediction,])/length(actual_predicted[,1])
+```
+Based on the test set we estimate the out-of-sample error to be `r length(actual_predicted[actual_predicted$actual!=actual_predicted$prediction,])/length(actual_predicted[,1])*100`%
+
+###Predictions
+Finally, we predict the class of the 20 cases for which the actual class is unknown.
+We predict the following classes for these 20 cases
+
+```{r}
+pred_test <-predict(model_rf$finalModel,newdata = test)
+pred_test
+```
+And add these values to the original test set
+```{r}
+test_original$problem_id <- pred_test
+```
