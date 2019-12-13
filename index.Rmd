@@ -1,9 +1,10 @@
 ---
 title: "Prediction Assignment Coursera Practical Machine Learning"
-output: html_document
+output: 
+  html_document: 
+    keep_md: yes
 keep_md: true
 author: by W. Bouma
-
 ---
 
 ```{r setup, include=FALSE}
